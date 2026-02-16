@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>aeoui — ambient field recordings</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="icon" type="image/x-icon" href="favicon.ico" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Sono:wght@200;300&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/howler/2.2.4/howler.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --ink: #0e0e0c;
+      --fog: #f0ede6;
+      --mist: #c8c3b8;
+      --rust: #8b6b4a;
+      --sage: #6b7c6e;
+      --cream: #e8e3d8;
+      --trans: 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--ink);
+      color: var(--fog);
+      font-family: 'Cormorant Garamond', serif;
+      overflow: hidden;
+      cursor: none;
+    }
+
+    /* ── Custom cursor ─────────────────────────────── */
+    #cursor {
+      position: fixed;
+      width: 8px; height: 8px;
+      background: var(--fog);
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 9999;
+      transform: translate(-50%, -50%);
+      transition: width 0.2s, height 0.2s, background 0.2s;
+      mix-blend-mode: difference;
+    }
+    #cursor.hovering { width: 40px; height: 40px; background: var(--rust); }
+
+    /* ── Background visual ─────────────────────────── */
+    #bg-visual {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+    }
+    #bg-video, #bg-image {
+      position: absolute;
+      inset: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+      opacity: 0;
+      transition: opacity 2.5s ease;
+    }
+    #bg-video.active, #bg-image.active { opacity: 1; }
+
+    /* Cinematic grain overlay */
+    #grain {
+      position: fixed;
+      inset: -50%;
+      width: 200%; height: 200%;
+      z-index: 1;
+      opacity: 0.04;
+      pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+      animation: grain-shift 0.5s steps(2) infinite;
+    }
+    @keyframes grain-shift {
+      0%   { transform: translate(0, 0); }
+      25%  { transform: translate(-2%, -3%); }
+      50%  { transform: translate(1%, 2%); }
+      75%  { transform: translate(3%, -1%); }
+      100% { transform: translate(-1%, 3%); }
+    }
+
+    /* Vignette */
+    #vignette {
+      position: fixed;
+      inset: 0;
+      z-index: 2;
+      pointer-events: none;
+      background: radial-gradient(ellipse at center,
+        transparent 40%,
+        rgba(14,14,12,0.5) 75%,
+        rgba(14,14,12,0.92) 100%);
+    }
+
+    /* ── Main layout ───────────────────────────────── */
+    #app {
+      position: relative;
+      z-index: 10;
+      width: 100vw; height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      grid-template-columns: 1fr;
+      padding: 2.5rem 3rem;
+    }
+
+    /* ── Header ────────────────────────────────────── */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+    .wordmark {
+      font-family: 'Cormorant Garamond', serif;
+      font-weight: 300;
+      font-size: 1.1rem;
+      letter-spacing: 0.35em;
+      text-transform: lowercase;
+      color: var(--fog);
+      opacity: 0.9;
+      text-decoration: none;
+    }
+    nav {
+      display: flex;
+      gap: 2rem;
+      align-items: center;
+    }
+    nav a {
+      font-family: 'Sono', monospace;
+      font-weight: 200;
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--mist);
+      text-decoration: none;
+      transition: color 0.3s;
+    }
+    nav a:hover { color: var(--fog); }
+
+    /* ── Center info ───────────────────────────────── */
+    #center-info {
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding-bottom: 2rem;
+      opacity: 0;
+      transform: translateY(16px);
+      transition: opacity 1.4s ease, transform 1.4s ease;
+    }
+    #center-info.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .location-label {
+      font-family: 'Sono', monospace;
+      font-weight: 200;
+      font-size: 0.68rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--mist);
+      margin-bottom: 0.6rem;
+    }
+    .recording-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-weight: 300;
+      font-size: clamp(2.2rem, 5vw, 4.2rem);
+      line-height: 1.05;
+      color: var(--fog);
+      max-width: 680px;
+    }
+    .recording-title em {
+      font-style: italic;
+      color: var(--cream);
+    }
+    .field-notes {
+      margin-top: 1rem;
+      font-family: 'Cormorant Garamond', serif;
+      font-style: italic;
+      font-size: 1.05rem;
+      color: var(--mist);
+      max-width: 420px;
+      line-height: 1.7;
+    }
+
+    /* ── Player footer ─────────────────────────────── */
+    footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+
+    /* Left: play controls */
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 1.8rem;
+    }
+    .btn-play {
+      width: 52px; height: 52px;
+      border: 1px solid rgba(240,237,230,0.25);
+      border-radius: 50%;
+      background: transparent;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: none;
+      transition: border-color 0.3s, background 0.3s;
+      position: relative;
+    }
+    .btn-play:hover {
+      border-color: var(--fog);
+      background: rgba(240,237,230,0.06);
+    }
+    .btn-play svg { transition: transform 0.2s; }
+    .btn-play:hover svg { transform: scale(1.1); }
+
+    .btn-icon {
+      background: none;
+      border: none;
+      color: var(--mist);
+      cursor: none;
+      padding: 0;
+      transition: color 0.3s;
+      display: flex;
+      align-items: center;
+    }
+    .btn-icon:hover { color: var(--fog); }
+
+    /* Waveform visualizer */
+    #visualizer {
+      width: 80px; height: 28px;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      opacity: 0.5;
+      transition: opacity 0.4s;
+    }
+    #visualizer.playing { opacity: 1; }
+    .bar {
+      flex: 1;
+      background: var(--fog);
+      border-radius: 2px;
+      transform-origin: bottom;
+      height: 4px;
+      transition: background 0.3s;
+    }
+    #visualizer.playing .bar { animation: bar-dance 1.2s ease-in-out infinite; }
+    .bar:nth-child(1) { animation-delay: 0s; }
+    .bar:nth-child(2) { animation-delay: 0.15s; }
+    .bar:nth-child(3) { animation-delay: 0.05s; }
+    .bar:nth-child(4) { animation-delay: 0.25s; }
+    .bar:nth-child(5) { animation-delay: 0.1s; }
+    .bar:nth-child(6) { animation-delay: 0.3s; }
+    .bar:nth-child(7) { animation-delay: 0.08s; }
+    @keyframes bar-dance {
+      0%, 100% { height: 3px; }
+      50% { height: 22px; }
+    }
+
+    /* Duration */
+    .duration {
+      font-family: 'Sono', monospace;
+      font-weight: 200;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      color: var(--mist);
+    }
+
+    /* Right: meta + nav */
+    .meta-nav {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 1rem;
+    }
+    .track-counter {
+      font-family: 'Sono', monospace;
+      font-weight: 200;
+      font-size: 0.68rem;
+      letter-spacing: 0.15em;
+      color: var(--mist);
+    }
+    .track-nav {
+      display: flex;
+      gap: 0.8rem;
+    }
+    .btn-nav {
+      background: none;
+      border: 1px solid rgba(240,237,230,0.15);
+      color: var(--mist);
+      cursor: none;
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: border-color 0.3s, color 0.3s;
+    }
+    .btn-nav:hover {
+      border-color: rgba(240,237,230,0.5);
+      color: var(--fog);
+    }
+
+    /* Progress bar along bottom */
+    #progress-container {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      height: 2px;
+      background: rgba(240,237,230,0.08);
+      z-index: 20;
+      cursor: none;
+    }
+    #progress-bar {
+      height: 100%;
+      background: var(--rust);
+      width: 0%;
+      transition: width 0.3s linear;
+    }
+
+    /* ── Entry overlay ─────────────────────────────── */
+    #entry-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: var(--ink);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2.5rem;
+      transition: opacity 1.5s ease;
+    }
+    #entry-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .entry-wordmark {
+      font-family: 'Cormorant Garamond', serif;
+      font-weight: 300;
+      font-size: 3.5rem;
+      letter-spacing: 0.5em;
+      color: var(--fog);
+      text-transform: lowercase;
+    }
+    .entry-sub {
+      font-family: 'Sono', monospace;
+      font-weight: 200;
+      font-size: 0.72rem;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--mist);
+    }
+    .btn-enter {
+      margin-top: 1rem;
+      background: none;
+      border: 1px solid rgba(240,237,230,0.25);
+      color: var(--fog);
+      font-family: 'Sono', monospace;
+      font-weight: 200;
+      font-size: 0.72rem;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      padding: 0.9rem 2.5rem;
+      cursor: none;
+      transition: border-color 0.3s, background 0.3s;
+    }
+    .btn-enter:hover {
+      border-color: var(--fog);
+      background: rgba(240,237,230,0.05);
+    }
+
+    /* ── Volume slider ─────────────────────────────── */
+    #vol-container {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+    #vol-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 70px;
+      height: 2px;
+      background: rgba(240,237,230,0.2);
+      outline: none;
+      cursor: none;
+    }
+    #vol-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--fog);
+      cursor: none;
+    }
+
+    /* ── Archive overlay ───────────────────────────── */
+    #archive-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      background: rgba(14,14,12,0.96);
+      display: flex;
+      flex-direction: column;
+      padding: 3rem;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.6s ease;
+      overflow-y: auto;
+    }
+    #archive-overlay.open {
+      opacity: 1;
+      pointer-events: all;
+    }
+    .archive-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 3rem;
+    }
+    .archive-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-weight: 300;
+      font-size: 2rem;
+      letter-spacing: 0.08em;
+    }
+    .btn-close {
+      background: none;
+      border: none;
+      color: var(--mist);
+      font-family: 'Sono', monospace;
+      font-size: 0.72rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      cursor: none;
+      transition: color 0.3s;
+    }
+    .btn-close:hover { color: var(--fog); }
+    .archive-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 1.5px;
+    }
+    .archive-item {
+      position: relative;
+      aspect-ratio: 4/3;
+      overflow: hidden;
+      cursor: none;
+      background: #1a1a17;
+    }
+    .archive-item img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      opacity: 0.6;
+      transition: opacity 0.5s, transform 0.6s;
+    }
+    .archive-item:hover img { opacity: 0.85; transform: scale(1.03); }
+    .archive-item-info {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      padding: 1.2rem;
+      background: linear-gradient(transparent, rgba(14,14,12,0.85));
+    }
+    .archive-item-location {
+      font-family: 'Sono', monospace;
+      font-weight: 200;
+      font-size: 0.62rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--mist);
+    }
+    .archive-item-name {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.2rem;
+      font-weight: 300;
+      color: var(--fog);
+      margin-top: 0.2rem;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="cursor"></div>
+
+  <!-- Entry overlay — requires user gesture before audio -->
+  <div id="entry-overlay">
+    <div class="entry-wordmark">aeoui</div>
+    <div class="entry-sub">ambient field recordings</div>
+    <button class="btn-enter" id="btn-enter">enter</button>
+  </div>
+
+  <!-- Background visual -->
+  <div id="bg-visual">
+    <video id="bg-video" autoplay muted loop playsinline></video>
+    <img id="bg-image" src="" alt="" />
+  </div>
+
+  <div id="grain"></div>
+  <div id="vignette"></div>
+
+  <!-- Main UI -->
+  <div id="app">
+    <header>
+      <a href="#" class="wordmark">aeoui</a>
+      <nav>
+        <a href="#" id="nav-archive">archive</a>
+        <a href="#" id="nav-about">about</a>
+        <a href="#" id="nav-surprise">↻ surprise me</a>
+      </nav>
+    </header>
+
+    <main id="center-info">
+      <div class="location-label" id="track-location">—</div>
+      <h1 class="recording-title" id="track-title">—</h1>
+      <p class="field-notes" id="track-notes">—</p>
+    </main>
+
+    <footer>
+      <div class="controls">
+        <button class="btn-play" id="btn-play" aria-label="Play / Pause">
+          <svg id="icon-play" width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <polygon points="5,2 16,9 5,16" fill="#f0ede6"/>
+          </svg>
+          <svg id="icon-pause" width="18" height="18" viewBox="0 0 18 18" fill="none" style="display:none">
+            <rect x="4" y="2" width="3.5" height="14" fill="#f0ede6"/>
+            <rect x="10.5" y="2" width="3.5" height="14" fill="#f0ede6"/>
+          </svg>
+        </button>
+
+        <div id="visualizer">
+          <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+          <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+          <div class="bar"></div>
+        </div>
+
+        <div id="vol-container">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M2 5H5L8 2V12L5 9H2V5Z" fill="#c8c3b8"/>
+            <path d="M10 4.5C11.2 5.2 12 6.5 12 8C12 9.5 11.2 10.8 10 11.5" stroke="#c8c3b8" stroke-width="1.2" fill="none"/>
+          </svg>
+          <input type="range" id="vol-slider" min="0" max="1" step="0.02" value="0.8" />
+        </div>
+
+        <span class="duration" id="track-duration">0:00</span>
+      </div>
+
+      <div class="meta-nav">
+        <span class="track-counter" id="track-counter">01 / 01</span>
+        <div class="track-nav">
+          <button class="btn-nav" id="btn-prev" aria-label="Previous">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <polygon points="10,1 2,6 10,11" fill="#c8c3b8"/>
+            </svg>
+          </button>
+          <button class="btn-nav" id="btn-next" aria-label="Next">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <polygon points="2,1 10,6 2,11" fill="#c8c3b8"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Progress bar -->
+  <div id="progress-container">
+    <div id="progress-bar"></div>
+  </div>
+
+  <!-- Archive overlay -->
+  <div id="archive-overlay">
+    <div class="archive-header">
+      <h2 class="archive-title">archive</h2>
+      <button class="btn-close" id="btn-close-archive">close ✕</button>
+    </div>
+    <div class="archive-grid" id="archive-grid"></div>
+  </div>
+
+  <script>
+  // ─────────────────────────────────────────────────────────────────────────────
+  // RECORDINGS DATA
+  // Edit this array to add your own recordings.
+  // For self-hosting: place files in /media/audio/ and /media/visuals/
+  // Visual can be a .mp4 video or image (.jpg/.png/.webp)
+  // ─────────────────────────────────────────────────────────────────────────────
+  const recordings = [
+    {
+      id: 1,
+      title: "Lake Ontario, late afternoon",
+      location: "Lake Ontario",
+      notes: "Waves, distant traffic, voices carried on the wind. A jet passes overhead and fades into the lake's horizon.",
+      audio: "media/audio/beach-plane.mp3",
+      visual: "media/visuals/beach-plane.mp4",
+      visualType: "video",
+      poster: "media/visuals/beach-plane.jpg",
+      duration: "2:24",
+    },
+    {
+      id: 2,
+      title: "snare fireworks",
+      location: "abstraction",
+      notes: "A snare drum processed through delay. Rhythm dissolved into texture, texture into atmosphere.",
+      audio: "media/audio/snare_fireworks.mp3",
+      visual: "media/visuals/snare_fireworks.mp4",
+      visualType: "video",
+      poster: "media/visuals/snare_fireworks.jpg",
+      duration: "15:48",
+    },
+  ];
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // STATE
+  // ─────────────────────────────────────────────────────────────────────────────
+  let currentIndex = 0;
+  let sound = null;
+  let isPlaying = false;
+  let progressInterval = null;
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // CURSOR
+  // ─────────────────────────────────────────────────────────────────────────────
+  const cursor = document.getElementById('cursor');
+  document.addEventListener('mousemove', e => {
+    cursor.style.left = e.clientX + 'px';
+    cursor.style.top  = e.clientY + 'px';
+  });
+  document.querySelectorAll('a, button, input').forEach(el => {
+    el.addEventListener('mouseenter', () => cursor.classList.add('hovering'));
+    el.addEventListener('mouseleave', () => cursor.classList.remove('hovering'));
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // LOAD A RECORDING
+  // ─────────────────────────────────────────────────────────────────────────────
+  function loadRecording(index, autoplay = false) {
+    const rec = recordings[index];
+
+    // Fade out current visual
+    const bgVideo = document.getElementById('bg-video');
+    const bgImage = document.getElementById('bg-image');
+    bgVideo.classList.remove('active');
+    bgImage.classList.remove('active');
+
+    setTimeout(() => {
+      // Set visual
+      if (rec.visualType === 'video') {
+        bgVideo.src = rec.visual;
+        bgVideo.load();
+        bgVideo.classList.add('active');
+        bgImage.classList.remove('active');
+      } else {
+        bgImage.src = rec.visual;
+        bgImage.classList.add('active');
+        bgVideo.classList.remove('active');
+      }
+    }, 400);
+
+    // Update text
+    document.getElementById('track-location').textContent = rec.location.toUpperCase();
+    document.getElementById('track-title').innerHTML = rec.title;
+    document.getElementById('track-notes').textContent = rec.notes;
+    document.getElementById('track-duration').textContent = rec.duration;
+    document.getElementById('track-counter').textContent =
+      String(index + 1).padStart(2, '0') + ' / ' + String(recordings.length).padStart(2, '0');
+
+    const info = document.getElementById('center-info');
+    info.classList.remove('visible');
+    setTimeout(() => info.classList.add('visible'), 100);
+
+    // Stop existing sound
+    if (sound) {
+      sound.stop();
+      clearInterval(progressInterval);
+    }
+    isPlaying = false;
+    updatePlayBtn();
+    document.getElementById('progress-bar').style.width = '0%';
+    document.getElementById('visualizer').classList.remove('playing');
+
+    // Load new sound
+    sound = new Howl({
+      src: [rec.audio],
+      html5: true,
+      volume: parseFloat(document.getElementById('vol-slider').value),
+      onend: () => {
+        isPlaying = false;
+        updatePlayBtn();
+        document.getElementById('visualizer').classList.remove('playing');
+        clearInterval(progressInterval);
+      },
+      onplay: () => {
+        progressInterval = setInterval(updateProgress, 500);
+      }
+    });
+
+    if (autoplay) playAudio();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // PLAYBACK CONTROLS
+  // ─────────────────────────────────────────────────────────────────────────────
+  function playAudio() {
+    if (!sound) return;
+    sound.play();
+    isPlaying = true;
+    updatePlayBtn();
+    document.getElementById('visualizer').classList.add('playing');
+  }
+
+  function pauseAudio() {
+    if (!sound) return;
+    sound.pause();
+    isPlaying = false;
+    updatePlayBtn();
+    document.getElementById('visualizer').classList.remove('playing');
+    clearInterval(progressInterval);
+  }
+
+  function updatePlayBtn() {
+    document.getElementById('icon-play').style.display  = isPlaying ? 'none'  : 'block';
+    document.getElementById('icon-pause').style.display = isPlaying ? 'block' : 'none';
+  }
+
+  function updateProgress() {
+    if (!sound || !sound.playing()) return;
+    const seek = sound.seek() || 0;
+    const dur  = sound.duration() || 1;
+    const pct  = (seek / dur) * 100;
+    document.getElementById('progress-bar').style.width = pct + '%';
+  }
+
+  document.getElementById('btn-play').addEventListener('click', () => {
+    if (isPlaying) pauseAudio(); else playAudio();
+  });
+
+  document.getElementById('btn-prev').addEventListener('click', () => {
+    currentIndex = (currentIndex - 1 + recordings.length) % recordings.length;
+    loadRecording(currentIndex, isPlaying);
+  });
+
+  document.getElementById('btn-next').addEventListener('click', () => {
+    currentIndex = (currentIndex + 1) % recordings.length;
+    loadRecording(currentIndex, isPlaying);
+  });
+
+  document.getElementById('nav-surprise').addEventListener('click', e => {
+    e.preventDefault();
+    let idx;
+    do { idx = Math.floor(Math.random() * recordings.length); } while (idx === currentIndex);
+    currentIndex = idx;
+    loadRecording(currentIndex, true);
+  });
+
+  // Volume
+  document.getElementById('vol-slider').addEventListener('input', e => {
+    if (sound) sound.volume(parseFloat(e.target.value));
+  });
+
+  // Progress scrub
+  document.getElementById('progress-container').addEventListener('click', e => {
+    if (!sound) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pct  = (e.clientX - rect.left) / rect.width;
+    sound.seek(pct * sound.duration());
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // ARCHIVE
+  // ─────────────────────────────────────────────────────────────────────────────
+  function buildArchive() {
+    const grid = document.getElementById('archive-grid');
+    grid.innerHTML = '';
+    recordings.forEach((rec, i) => {
+      const item = document.createElement('div');
+      item.className = 'archive-item';
+      // For video, show poster frame (first frame) — supply a poster image
+      const imgSrc = rec.visualType === 'image' ? rec.visual : (rec.poster || rec.visual.replace('.mp4', '.jpg'));
+      item.innerHTML = `
+        <img src="${imgSrc}" alt="${rec.title}" loading="lazy" />
+        <div class="archive-item-info">
+          <div class="archive-item-location">${rec.location}</div>
+          <div class="archive-item-name">${rec.title}</div>
+        </div>
+      `;
+      item.addEventListener('click', () => {
+        currentIndex = i;
+        loadRecording(i, true);
+        toggleArchive(false);
+      });
+      grid.appendChild(item);
+    });
+  }
+
+  function toggleArchive(open) {
+    document.getElementById('archive-overlay').classList.toggle('open', open);
+  }
+
+  document.getElementById('nav-archive').addEventListener('click', e => {
+    e.preventDefault();
+    buildArchive();
+    toggleArchive(true);
+  });
+  document.getElementById('btn-close-archive').addEventListener('click', () => toggleArchive(false));
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // ENTRY — requires user click to start audio (browser policy)
+  // ─────────────────────────────────────────────────────────────────────────────
+  document.getElementById('btn-enter').addEventListener('click', () => {
+    document.getElementById('entry-overlay').classList.add('hidden');
+    loadRecording(currentIndex, false);
+    setTimeout(() => {
+      document.getElementById('center-info').classList.add('visible');
+    }, 800);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // ANALYTICS — heartbeat + nav tracking
+  // ─────────────────────────────────────────────────────────────────────────────
+
+let _sessionId = null;
+  const sessionStart = Date.now();
+
+  fetch('/api/session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ referer: document.referrer || 'Direct' })
+  }).then(res => res.json()).then(data => {
+    _sessionId = data.sessionId;
+    document.addEventListener('click', () => {
+      if (!_sessionId) return;
+      fetch('/api/track-nav', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: _sessionId }),
+      }).catch(() => {});
+    });
+  }).catch(() => {});
+
+  setInterval(() => {
+    if (!_sessionId) return;
+    const duration = Math.round((Date.now() - sessionStart) / 1000);
+    fetch('/api/heartbeat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: _sessionId, duration }),
+    }).catch(() => {});
+  }, 10000);
+
+
+   </script>
+</body>
+</html>
