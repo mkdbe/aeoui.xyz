@@ -2,3 +2,4 @@ node_modules/
 analytics.json
 media/
 *.log
+package-lock.json
