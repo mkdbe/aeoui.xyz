@@ -129,7 +129,6 @@ function logVisit(req, res, next) {
 
     // Attach session ID to response header so client can reference it
     res.setHeader('X-Session-Id', sessionId);
-    res.setHeader('Access-Control-Expose-Headers', 'X-Session-Id');
     next();
 }
 
@@ -156,7 +155,6 @@ app.post('/api/heartbeat', express.json(), (req, res) => {
 // Track navigation (recording changes)
 app.post('/api/track-nav', express.json(), (req, res) => {
     const { sessionId } = req.body;
-    console.log('track-nav called, sessionId:', sessionId);  // ADD THIS
     if (!sessionId) return res.sendStatus(400);
 
     const data = loadAnalytics();
@@ -203,42 +201,6 @@ app.get('*', (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // START
 // ─────────────────────────────────────────────────────────────────────────────
-
-
-
-// Create session and return ID
-app.post('/api/session', express.json(), (req, res) => {
-    const ip = getIP(req);
-    const ua = req.headers['user-agent'] || '';
-    if (EXCLUDED_IPS.includes(ip) || BOT_PATTERNS.test(ua)) {
-        return res.json({ sessionId: null });
-    }
-    const sessionId = `${ip}-${Date.now()}`;
-    const geo = geoip.lookup(ip);
-    let location = 'Unknown';
-    if (geo) {
-        const parts = [geo.city, geo.region, geo.country].filter(Boolean);
-        location = parts.join(', ') || 'Unknown';
-    }
-    const data = loadAnalytics();
-    data.visits.push({
-        id: sessionId,
-        timestamp: new Date().toISOString(),
-        ip,
-        location,
-        device: getDeviceType(ua),
-        browser: getBrowser(ua),
-        os: getOS(ua),
-        referer: getSource(req),
-        duration: 0,
-        navCount: 0,
-    });
-    if (data.visits.length > 10000) data.visits = data.visits.slice(-10000);
-    saveAnalytics(data);
-    res.json({ sessionId });
-});
-
-
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`aeoui running on port ${PORT}`);
 });
