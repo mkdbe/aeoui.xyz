@@ -4,3 +4,8 @@ media/
 *.log
 package-lock.json
 package-lock.json
+
+*.db
+*.pdf
+*.bak*
+.env
